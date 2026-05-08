@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Auto Page Translator</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="header">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">
+            <span class="logo-primary">文</span>
+            <span class="logo-secondary">A</span>
+          </div>
+          <h1>Auto Page Translator</h1>
+        </div>
+        <div class="header-actions">
+          <span id="mode-chip" class="chip chip-success">Active</span>
+          <button id="settings-button" class="icon-button" type="button" title="Open settings" aria-label="Open settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.05.05a2 2 0 1 1-2.83 2.83l-.05-.05A1.65 1.65 0 0 0 15.08 19a1.65 1.65 0 0 0-1 .57 1.65 1.65 0 0 0-.4 1.08V21a2 2 0 1 1-4 0v-.08A1.65 1.65 0 0 0 8.6 19.4a1.65 1.65 0 0 0-1.82.33l-.05.05a2 2 0 1 1-2.83-2.83l.05-.05A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.57-1 1.65 1.65 0 0 0-1.08-.4H3a2 2 0 1 1 0-4h.08A1.65 1.65 0 0 0 4.6 8.52a1.65 1.65 0 0 0-.33-1.82l-.05-.05A2 2 0 1 1 7.05 3.8l.05.05A1.65 1.65 0 0 0 8.92 4.5H9a1.65 1.65 0 0 0 1-.57 1.65 1.65 0 0 0 .4-1.08V3a2 2 0 1 1 4 0v.08a1.65 1.65 0 0 0 1.08 1.52 1.65 1.65 0 0 0 1.82-.33l.05-.05a2 2 0 1 1 2.83 2.83l-.05.05a1.65 1.65 0 0 0-.33 1.82V9c0 .69.41 1.31 1.05 1.58.22.09.46.14.7.14H21a2 2 0 1 1 0 4h-.08a1.65 1.65 0 0 0-1.52 1.08Z"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="card current-card" aria-labelledby="current-page-title">
+        <h2 id="current-page-title">Current page</h2>
+        <div class="meta-row">
+          <svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>
+          <span id="current-url" class="truncate">Loading current tab...</span>
+        </div>
+        <div id="match-row" class="meta-row match-row">
+          <span class="status-dot status-info"></span>
+          <span>Checking rules...</span>
+        </div>
+        <div class="action-row">
+          <button id="translate-button" class="button button-primary" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.3 6.4"/><path d="M3 12A9 9 0 0 1 18.3 5.6"/><path d="M21 5v5h-5"/><path d="M3 19v-5h5"/></svg>
+            <span>Translate now</span>
+          </button>
+          <button id="secondary-button" class="button button-secondary" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>
+            <span>Restore original</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="setting-row">
+        <div>
+          <h2>Auto translate matching pages</h2>
+          <p>Runs only when the URL contains one of your saved rules.</p>
+        </div>
+        <label class="switch" for="auto-toggle">
+          <input id="auto-toggle" type="checkbox">
+          <span></span>
+        </label>
+      </section>
+
+      <section class="rules-section" aria-labelledby="rules-title">
+        <h2 id="rules-title">URL contains rules</h2>
+        <form id="rule-form" class="rule-form">
+          <input id="rule-input" type="text" autocomplete="off" placeholder="Enter part of a URL (e.g. example.com)">
+          <button class="add-button" type="submit" aria-label="Add rule">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </form>
+        <div id="rules-container"></div>
+      </section>
+
+      <section id="status-card" class="notice notice-success" aria-live="polite">
+        <div class="notice-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 12 3 3 7-7"/><circle cx="12" cy="12" r="10"/></svg>
+        </div>
+        <div>
+          <h2 id="status-title">Ready</h2>
+          <p id="status-message">Extension is active and waiting.</p>
+          <div id="progress-wrap" class="progress-wrap" hidden>
+            <div class="progress-track">
+              <div id="progress-bar" class="progress-bar"></div>
+            </div>
+            <span id="progress-label">0%</span>
+          </div>
+          <div id="status-actions" class="notice-actions" hidden>
+            <button id="retry-button" type="button">Retry</button>
+            <a href="https://developer.chrome.com/docs/ai/translator-api" target="_blank" rel="noreferrer">Learn more</a>
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <button id="options-link" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+          Options
+        </button>
+        <span>v1.0</span>
+      </footer>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

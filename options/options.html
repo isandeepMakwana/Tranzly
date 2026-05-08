@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Auto Page Translator Options</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="options-shell">
+      <header>
+        <div class="logo" aria-hidden="true">
+          <span>文</span>
+          <b>A</b>
+        </div>
+        <div>
+          <h1>Auto Page Translator</h1>
+          <p>Configure the URL contains rules used for automatic translation.</p>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="toggle-row">
+          <div>
+            <h2>Auto translate matching pages</h2>
+            <p>When enabled, pages whose URL contains one of your rules are translated automatically.</p>
+          </div>
+          <label class="switch" for="auto-toggle">
+            <input id="auto-toggle" type="checkbox">
+            <span></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>URL contains rules</h2>
+        <form id="rule-form" class="rule-form">
+          <input id="rule-input" type="text" autocomplete="off" placeholder="cloud.oppoer.me">
+          <button type="submit">Add rule</button>
+        </form>
+        <div id="rules-list" class="rules-list"></div>
+      </section>
+
+      <section class="panel logs-panel">
+        <div class="logs-heading">
+          <div>
+            <h2>Logs overview</h2>
+            <p>Recent rule, translation, page, icon, lifecycle, and user-action events.</p>
+          </div>
+          <button id="clear-logs" type="button">Clear logs</button>
+        </div>
+        <div id="logs-grid" class="logs-grid"></div>
+      </section>
+    </main>
+
+    <script src="options.js"></script>
+  </body>
+</html>
