@@ -28,9 +28,14 @@
   const MAX_TEXT_LENGTH = 1200;
   const BATCH_MAX_CHARS = 3500;
   const BATCH_MAX_ITEMS = 40;
-  const FIRST_PAINT_BATCH_ITEMS = 12;
+  const FIRST_PAINT_BATCH_ITEMS = 8;
+  const VISIBLE_TARGET_LIMIT = 80;
+  const VISIBLE_SCAN_NODE_LIMIT = 1600;
+  const VISIBLE_PROGRESS_END = 35;
   const BATCH_MARKER_PREFIX = "__APT_";
   const BATCH_MARKER_SUFFIX = "__";
+  const MUTATION_TRANSLATE_DELAY_MS = 80;
+  const MAX_MUTATION_ROOTS = 40;
   const PROGRESS_UPDATE_INTERVAL_MS = 180;
   const TRANSLATION_CONCURRENCY = 6;
 
@@ -44,7 +49,10 @@
   let observer = null;
   let autoTranslateTimer = null;
   let statusPublishTimer = null;
+  let mutationTranslateTimer = null;
+  let pendingMutationRoots = new Set();
   let urlWatcherTimer = null;
+  let manualOriginalMode = false;
   let lastMatchLogKey = "";
   let lastUrl = location.href;
 
@@ -210,6 +218,24 @@
 
   function collectTextTargets(root) {
     const targets = [];
+
+    if (root.nodeType === Node.TEXT_NODE) {
+      if (
+        root.parentElement
+        && !isElementSkipped(root.parentElement)
+        && !translatedTextNodes.has(root)
+        && isUsefulText(root.nodeValue)
+      ) {
+        targets.push({
+          type: "text",
+          node: root,
+          original: root.nodeValue
+        });
+      }
+
+      return targets;
+    }
+
     const walker = document.createTreeWalker(
       root,
       NodeFilter.SHOW_TEXT,
@@ -249,9 +275,21 @@
     return ["button", "submit", "reset"].includes(element.type);
   }
 
+  function getElementTargets(root) {
+    if (!root || typeof root.querySelectorAll !== "function") {
+      return [];
+    }
+
+    if (root.nodeType === Node.ELEMENT_NODE) {
+      return [root, ...root.querySelectorAll("*")];
+    }
+
+    return [...root.querySelectorAll("*")];
+  }
+
   function collectAttributeTargets(root) {
     const targets = [];
-    const elements = root.querySelectorAll("*");
+    const elements = getElementTargets(root);
 
     elements.forEach((element) => {
       if (isElementSkipped(element)) {
@@ -301,12 +339,67 @@
     ];
   }
 
+  function addUniqueTarget(target, targets, seenTextNodes, seenAttributes) {
+    if (target.type === "text") {
+      if (seenTextNodes.has(target.node)) {
+        return;
+      }
+
+      seenTextNodes.add(target.node);
+      targets.push(target);
+      return;
+    }
+
+    let attributes = seenAttributes.get(target.element);
+    if (!attributes) {
+      attributes = new Set();
+      seenAttributes.set(target.element, attributes);
+    }
+
+    if (attributes.has(target.attribute)) {
+      return;
+    }
+
+    attributes.add(target.attribute);
+    targets.push(target);
+  }
+
+  function collectTargetsFromRoots(roots) {
+    const targets = [];
+    const seenTextNodes = new WeakSet();
+    const seenAttributes = new WeakMap();
+
+    roots.forEach((root) => {
+      collectTargets(root).forEach((target) => {
+        addUniqueTarget(target, targets, seenTextNodes, seenAttributes);
+      });
+    });
+
+    return targets;
+  }
+
   function getTargetElement(target) {
     if (target.type === "text") {
       return target.node?.parentElement || null;
     }
 
     return target.element || null;
+  }
+
+  function isElementInViewport(element) {
+    if (!element || typeof element.getBoundingClientRect !== "function") {
+      return false;
+    }
+
+    const rect = element.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1200;
+    return rect.width > 0
+      && rect.height > 0
+      && rect.bottom >= 0
+      && rect.top <= viewportHeight
+      && rect.right >= 0
+      && rect.left <= viewportWidth;
   }
 
   function getTargetPriority(target) {
@@ -317,7 +410,7 @@
 
     const rect = element.getBoundingClientRect();
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
-    const isVisible = rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.top <= viewportHeight;
+    const isVisible = isElementInViewport(element);
 
     if (isVisible) {
       return Math.max(0, rect.top);
@@ -331,7 +424,158 @@
   }
 
   function prioritizeTargets(targets) {
-    return [...targets].sort((left, right) => getTargetPriority(left) - getTargetPriority(right));
+    return targets
+      .map((target, index) => ({
+        target,
+        index,
+        priority: getTargetPriority(target)
+      }))
+      .sort((left, right) => left.priority - right.priority || left.index - right.index)
+      .map(({ target }) => target);
+  }
+
+  function collectVisibleTextTargets(root, limit) {
+    const targets = [];
+
+    if (!root || limit <= 0) {
+      return targets;
+    }
+
+    if (root.nodeType === Node.TEXT_NODE) {
+      if (
+        root.parentElement
+        && isElementInViewport(root.parentElement)
+        && !isElementSkipped(root.parentElement)
+        && !translatedTextNodes.has(root)
+        && isUsefulText(root.nodeValue)
+      ) {
+        targets.push({
+          type: "text",
+          node: root,
+          original: root.nodeValue
+        });
+      }
+
+      return targets;
+    }
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+
+    let visitedNodes = 0;
+    while (targets.length < limit && visitedNodes < VISIBLE_SCAN_NODE_LIMIT && walker.nextNode()) {
+      visitedNodes += 1;
+      const node = walker.currentNode;
+      if (
+        !node.parentElement
+        || isElementSkipped(node.parentElement)
+        || translatedTextNodes.has(node)
+        || !isUsefulText(node.nodeValue)
+        || !isElementInViewport(node.parentElement)
+      ) {
+        continue;
+      }
+
+      targets.push({
+        type: "text",
+        node,
+        original: node.nodeValue
+      });
+    }
+
+    return targets;
+  }
+
+  function collectVisibleAttributeTargets(root, limit) {
+    const targets = [];
+
+    if (!root || limit <= 0) {
+      return targets;
+    }
+
+    function addElementAttributes(element) {
+      if (targets.length >= limit || isElementSkipped(element) || !isElementInViewport(element)) {
+        return;
+      }
+
+      TRANSLATABLE_ATTRIBUTES.forEach((attribute) => {
+        if (targets.length >= limit) {
+          return;
+        }
+
+        const value = element.getAttribute(attribute);
+        const translatedForElement = translatedAttributes.get(element);
+
+        if (translatedForElement?.has(attribute) || !value || !isUsefulText(value)) {
+          return;
+        }
+
+        targets.push({
+          type: "attribute",
+          element,
+          attribute,
+          original: value
+        });
+      });
+
+      if (targets.length >= limit || !isButtonValueTranslatable(element)) {
+        return;
+      }
+
+      const translatedForElement = translatedAttributes.get(element);
+      if (!translatedForElement?.has("value") && isUsefulText(element.value)) {
+        targets.push({
+          type: "attribute",
+          element,
+          attribute: "value",
+          original: element.value
+        });
+      }
+    }
+
+    if (root.nodeType === Node.ELEMENT_NODE) {
+      addElementAttributes(root);
+    }
+
+    if (typeof root.querySelectorAll !== "function") {
+      return targets;
+    }
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let visitedNodes = 0;
+    while (targets.length < limit && visitedNodes < VISIBLE_SCAN_NODE_LIMIT && walker.nextNode()) {
+      visitedNodes += 1;
+      addElementAttributes(walker.currentNode);
+    }
+
+    return targets;
+  }
+
+  function collectVisibleTargetsFromRoots(roots, limit = VISIBLE_TARGET_LIMIT) {
+    const targets = [];
+    const seenTextNodes = new WeakSet();
+    const seenAttributes = new WeakMap();
+
+    roots.forEach((root) => {
+      if (targets.length >= limit) {
+        return;
+      }
+
+      const remainingForText = limit - targets.length;
+      collectVisibleTextTargets(root, remainingForText).forEach((target) => {
+        addUniqueTarget(target, targets, seenTextNodes, seenAttributes);
+      });
+
+      if (targets.length >= limit) {
+        return;
+      }
+
+      const remainingForAttributes = limit - targets.length;
+      collectVisibleAttributeTargets(root, remainingForAttributes).forEach((target) => {
+        addUniqueTarget(target, targets, seenTextNodes, seenAttributes);
+      });
+    });
+
+    return prioritizeTargets(targets);
   }
 
   async function getTranslator() {
@@ -572,21 +816,78 @@
     return translatedByText;
   }
 
-  function createProgressReporter(totalCount) {
+  function createPhaseProgressReporter(totalCount, startProgress, endProgress, appliedOffset = 0) {
     let lastUpdate = 0;
+    const progressRange = Math.max(0, endProgress - startProgress);
 
-    return (completedCount, translatedCount = status.translatedCount || 0, force = false) => {
+    return (completedCount, translatedCount = 0, force = false) => {
       const now = Date.now();
       if (!force && now - lastUpdate < PROGRESS_UPDATE_INTERVAL_MS && completedCount < totalCount) {
         return;
       }
 
       lastUpdate = now;
+      const phaseProgress = totalCount ? completedCount / totalCount : 1;
       setStatus({
-        progress: totalCount ? Math.round((completedCount / totalCount) * 100) : 100,
-        translatedCount
+        progress: Math.min(100, Math.round(startProgress + (phaseProgress * progressRange))),
+        translatedCount: appliedOffset + translatedCount
       });
     };
+  }
+
+  async function translateTargets(targets, reportTranslationProgress) {
+    let appliedCount = 0;
+    const targetsByText = new Map();
+    const appliedTargets = new Set();
+
+    targets.forEach((target) => {
+      const key = getTranslationKey(target.original);
+      const groupedTargets = targetsByText.get(key) || [];
+      groupedTargets.push(target);
+      targetsByText.set(key, groupedTargets);
+    });
+
+    function applyTranslatedChunk(translatedChunk) {
+      translatedChunk.forEach((translated, sourceText) => {
+        const groupedTargets = targetsByText.get(sourceText) || [];
+
+        groupedTargets.forEach((target) => {
+          if (appliedTargets.has(target)) {
+            return;
+          }
+
+          appliedTargets.add(target);
+          if (translated && applyTranslation(target, translated)) {
+            appliedCount += 1;
+          }
+        });
+      });
+
+      reportTranslationProgress(appliedTargets.size, appliedCount, true);
+    }
+
+    const translatedByText = await translateUniqueTexts(targets, (completed, total) => {
+      const estimatedCompletedTargets = Math.round((completed / total) * targets.length);
+      reportTranslationProgress(Math.max(appliedTargets.size, estimatedCompletedTargets), appliedCount);
+    }, applyTranslatedChunk);
+
+    targets.forEach((target, index) => {
+      if (appliedTargets.has(target)) {
+        return;
+      }
+
+      const translated = translatedByText.get(getTranslationKey(target.original));
+
+      if (translated && applyTranslation(target, translated)) {
+        appliedCount += 1;
+      }
+
+      appliedTargets.add(target);
+      reportTranslationProgress(index + 1, appliedCount);
+    });
+
+    reportTranslationProgress(targets.length, appliedCount, true);
+    return appliedCount;
   }
 
   function rememberAttributeOriginal(element, attribute, original) {
@@ -641,8 +942,11 @@
       return getPublicStatus();
     }
 
-    const { force = false } = options;
+    const { force = false, roots = null, dynamic = false } = options;
     const { matchedRule } = await refreshMatchStatus();
+    manualOriginalMode = false;
+    pendingMutationRoots.clear();
+    clearPendingMutationTranslate();
 
     logEvent("translation", "TRANSLATE_START", "Translation started", "info", {
       force,
@@ -653,94 +957,98 @@
       restoreOriginal({ silent: true });
     }
 
-    const targets = prioritizeTargets(collectTargets());
-    logEvent("translation", "TRANSLATE_FOUND", `Found ${targets.length} translatable elements`, "info", {
-      count: targets.length
-    });
-
-    if (!targets.length) {
-      setStatus({
-        state: "translated",
-        progress: 100,
-        totalCount: 0,
-        message: matchedRule ? "No Chinese text found on this page." : "Manual translation completed.",
-        error: "",
-        canRestore: getRestorableCount() > 0
-      });
-      logEvent("translation", "TRANSLATE_COMPLETE", "Translation completed with no Chinese text found", "success", {
-        translatedCount: 0
-      });
-      return getPublicStatus();
-    }
-
+    const scanRoots = Array.isArray(roots) && roots.length
+      ? roots.filter((root) => root && (root === document || root.isConnected))
+      : [document.body].filter(Boolean);
+    const isFullPageScan = !dynamic && !(Array.isArray(roots) && roots.length);
     isTranslating = true;
     let appliedCount = 0;
-
-    setStatus({
-      state: "translating",
-      progress: 0,
-      totalCount: targets.length,
-      translatedCount: 0,
-      message: "Please wait while we translate the page content.",
-      error: ""
-    });
+    let totalCount = 0;
 
     try {
-      const reportTranslationProgress = createProgressReporter(targets.length);
-      const targetsByText = new Map();
-      const appliedTargets = new Set();
-
-      targets.forEach((target) => {
-        const key = getTranslationKey(target.original);
-        const groupedTargets = targetsByText.get(key) || [];
-        groupedTargets.push(target);
-        targetsByText.set(key, groupedTargets);
-      });
-
-      function applyTranslatedChunk(translatedChunk) {
-        translatedChunk.forEach((translated, sourceText) => {
-          const groupedTargets = targetsByText.get(sourceText) || [];
-
-          groupedTargets.forEach((target) => {
-            if (appliedTargets.has(target)) {
-              return;
-            }
-
-            appliedTargets.add(target);
-            if (translated && applyTranslation(target, translated)) {
-              appliedCount += 1;
-            }
+      if (isFullPageScan) {
+        const visibleTargets = collectVisibleTargetsFromRoots(scanRoots);
+        if (visibleTargets.length) {
+          totalCount += visibleTargets.length;
+          setStatus({
+            state: "translating",
+            progress: 0,
+            totalCount,
+            translatedCount: 0,
+            message: "Translating visible content first.",
+            error: ""
           });
-        });
 
-        reportTranslationProgress(appliedTargets.size, appliedCount, true);
+          appliedCount += await translateTargets(
+            visibleTargets,
+            createPhaseProgressReporter(visibleTargets.length, 0, VISIBLE_PROGRESS_END)
+          );
+
+          setStatus({
+            state: "translating",
+            progress: VISIBLE_PROGRESS_END,
+            totalCount,
+            translatedCount: appliedCount,
+            message: "Visible content translated. Continuing with the rest of the page.",
+            error: ""
+          });
+          await yieldToBrowser();
+        }
       }
 
-      const translatedByText = await translateUniqueTexts(targets, (completed, total) => {
-        const estimatedCompletedTargets = Math.round((completed / total) * targets.length);
-        reportTranslationProgress(Math.max(appliedTargets.size, estimatedCompletedTargets), appliedCount);
-      }, applyTranslatedChunk);
-
-      targets.forEach((target, index) => {
-        if (appliedTargets.has(target)) {
-          return;
-        }
-
-        const translated = translatedByText.get(getTranslationKey(target.original));
-
-        if (translated && applyTranslation(target, translated)) {
-          appliedCount += 1;
-        }
-
-        appliedTargets.add(target);
-        reportTranslationProgress(index + 1, appliedCount);
+      const targets = prioritizeTargets(collectTargetsFromRoots(scanRoots));
+      totalCount += targets.length;
+      logEvent("translation", "TRANSLATE_FOUND", `Found ${totalCount} translatable elements`, "info", {
+        count: totalCount
       });
 
-      reportTranslationProgress(targets.length, appliedCount, true);
+      if (!targets.length && !appliedCount) {
+        if (dynamic && getRestorableCount() > 0) {
+          setStatus({
+            state: "translated",
+            progress: 100,
+            error: ""
+          });
+          return getPublicStatus();
+        }
+
+        setStatus({
+          state: "translated",
+          progress: 100,
+          totalCount: 0,
+          message: matchedRule ? "No Chinese text found on this page." : "Manual translation completed.",
+          error: "",
+          canRestore: getRestorableCount() > 0
+        });
+        logEvent("translation", "TRANSLATE_COMPLETE", "Translation completed with no Chinese text found", "success", {
+          translatedCount: 0
+        });
+        return getPublicStatus();
+      }
+
+      if (targets.length) {
+        const startProgress = appliedCount ? VISIBLE_PROGRESS_END : 0;
+        setStatus({
+          state: "translating",
+          progress: startProgress,
+          totalCount,
+          translatedCount: appliedCount,
+          message: appliedCount
+            ? "Visible content translated. Continuing with the rest of the page."
+            : "Please wait while we translate the page content.",
+          error: ""
+        });
+
+        appliedCount += await translateTargets(
+          targets,
+          createPhaseProgressReporter(targets.length, startProgress, 100, appliedCount)
+        );
+      }
 
       setStatus({
         state: "translated",
         progress: 100,
+        totalCount,
         translatedCount: appliedCount,
         message: appliedCount === 1
           ? "1 element translated."
@@ -749,7 +1057,7 @@
       });
       logEvent("translation", "TRANSLATE_COMPLETE", "Translation completed successfully", "success", {
         translatedCount: appliedCount,
-        totalCount: targets.length
+        totalCount
       });
     } catch (error) {
       const message = error?.message || "Translator is not available in this Chrome version.";
@@ -768,12 +1076,19 @@
       }
     } finally {
       isTranslating = false;
+      if (pendingMutationRoots.size) {
+        schedulePendingMutationTranslate(0);
+      }
     }
 
     return getPublicStatus();
   }
 
   function restoreOriginal(options = {}) {
+    if (!options.silent) {
+      manualOriginalMode = true;
+    }
+
     translatedTextNodes.forEach((original, node) => {
       if (node.isConnected) {
         node.nodeValue = original;
@@ -799,14 +1114,16 @@
 
     translatedTextNodes.clear();
     translatedAttributes.clear();
+    pendingMutationRoots.clear();
+    clearPendingMutationTranslate();
 
     if (!options.silent) {
       setStatus({
-        state: "ready",
+        state: "original",
         progress: 0,
         translatedCount: 0,
         totalCount: 0,
-        message: "Original text restored.",
+        message: "Original text restored. Click Translate now to translate again.",
         error: ""
       });
       logEvent("translation", "TRANSLATE_RESTORE", "Original content restored", "success", {
@@ -815,7 +1132,7 @@
     }
   }
 
-  async function maybeAutoTranslate() {
+  async function maybeAutoTranslate(options = {}) {
     const { config, matchedRule } = await refreshMatchStatus();
 
     if (!matchedRule) {
@@ -844,16 +1161,39 @@
       return;
     }
 
+    if (manualOriginalMode) {
+      if (status.state !== "translating") {
+        setStatus({
+          state: "original",
+          progress: 0,
+          translatedCount: 0,
+          totalCount: 0,
+          message: "Original text restored. Click Translate now to translate again.",
+          error: ""
+        });
+      }
+      return;
+    }
+
     if (!isTranslating) {
-      await translatePage({ force: false });
+      await translatePage({
+        force: false,
+        roots: options.roots,
+        dynamic: Boolean(options.dynamic)
+      });
     }
   }
 
-  function scheduleAutoTranslate(delay = 450) {
+  function scheduleAutoTranslate(delay = 450, options = {}) {
     clearTimeout(autoTranslateTimer);
     autoTranslateTimer = setTimeout(() => {
-      maybeAutoTranslate();
+      maybeAutoTranslate(options);
     }, delay);
+  }
+
+  function clearPendingMutationTranslate() {
+    clearTimeout(mutationTranslateTimer);
+    mutationTranslateTimer = null;
   }
 
   function nodeMayContainChinese(node) {
@@ -878,20 +1218,88 @@
       return true;
     }
 
+    if (isButtonValueTranslatable(element) && CHINESE_TEXT.test(element.value || "")) {
+      return true;
+    }
+
     return TRANSLATABLE_ATTRIBUTES.some((attribute) => {
       const value = element.getAttribute(attribute);
       return value && CHINESE_TEXT.test(value);
     });
   }
 
-  function mutationsMayContainChinese(mutations) {
-    return mutations.some((mutation) => {
+  function getMutationRoots(mutations) {
+    const roots = [];
+
+    mutations.forEach((mutation) => {
       if (mutation.type === "characterData") {
-        return nodeMayContainChinese(mutation.target);
+        if (nodeMayContainChinese(mutation.target)) {
+          roots.push(mutation.target);
+        }
+        return;
       }
 
-      return Array.from(mutation.addedNodes || []).some(nodeMayContainChinese);
+      if (mutation.type === "attributes") {
+        if (nodeMayContainChinese(mutation.target)) {
+          roots.push(mutation.target);
+        }
+        return;
+      }
+
+      Array.from(mutation.addedNodes || []).forEach((node) => {
+        if (nodeMayContainChinese(node)) {
+          roots.push(node);
+        }
+      });
     });
+
+    return roots;
+  }
+
+  function queueMutationRoots(roots) {
+    if (manualOriginalMode) {
+      return;
+    }
+
+    if (!roots.length) {
+      return;
+    }
+
+    roots.forEach((root) => {
+      if (pendingMutationRoots.size >= MAX_MUTATION_ROOTS) {
+        pendingMutationRoots.clear();
+        pendingMutationRoots.add(document.body);
+        return;
+      }
+
+      pendingMutationRoots.add(root);
+    });
+
+    if (!isTranslating) {
+      schedulePendingMutationTranslate();
+    }
+  }
+
+  function schedulePendingMutationTranslate(delay = MUTATION_TRANSLATE_DELAY_MS) {
+    clearPendingMutationTranslate();
+    mutationTranslateTimer = setTimeout(() => {
+      translatePendingMutationRoots();
+    }, delay);
+  }
+
+  async function translatePendingMutationRoots() {
+    if (!pendingMutationRoots.size) {
+      return;
+    }
+
+    if (isTranslating) {
+      schedulePendingMutationTranslate();
+      return;
+    }
+
+    const roots = [...pendingMutationRoots];
+    pendingMutationRoots.clear();
+    await maybeAutoTranslate({ roots, dynamic: true });
   }
 
   function startObserver() {
@@ -900,15 +1308,15 @@
     }
 
     observer = new MutationObserver((mutations) => {
-      if (!isTranslating && mutationsMayContainChinese(mutations)) {
-        scheduleAutoTranslate(650);
-      }
+      queueMutationRoots(getMutationRoots(mutations));
     });
 
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: true,
+      attributes: true,
+      attributeFilter: [...TRANSLATABLE_ATTRIBUTES, "value"]
     });
   }
 
@@ -919,6 +1327,9 @@
       }
 
       lastUrl = location.href;
+      manualOriginalMode = false;
+      pendingMutationRoots.clear();
+      clearPendingMutationTranslate();
       logEvent("page", "URL_CHANGED", `URL changed: ${location.href}`, "info");
       setStatus({
         state: "ready",
@@ -928,7 +1339,7 @@
         message: "Extension is active and waiting.",
         error: ""
       });
-      scheduleAutoTranslate(700);
+      scheduleAutoTranslate(100);
     }, 50);
   }
 
@@ -1019,7 +1430,7 @@
       }
 
       if (changes[STORAGE_KEYS.rules] || changes[STORAGE_KEYS.autoTranslate]) {
-        scheduleAutoTranslate(300);
+        scheduleAutoTranslate(100);
       }
     });
   }
@@ -1036,7 +1447,7 @@
     patchHistoryForSpaNavigation();
     startUrlWatcher();
     startObserver();
-    scheduleAutoTranslate(300);
+    scheduleAutoTranslate(0);
   }
 
   init();
