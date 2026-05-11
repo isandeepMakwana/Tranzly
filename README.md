@@ -34,3 +34,10 @@ The built-in Translator API requires Chrome support for the `Translator` web API
 - Success: check badge, green
 - Error: `ERR`, red
 - Paused: `OFF`, gray
+
+
+## SS 
+<img width="474" height="752" alt="image" src="https://github.com/user-attachments/assets/65ba7be2-db02-448f-9a80-ae91c7ebf833" />
+<img width="1920" height="912" alt="image" src="https://github.com/user-attachments/assets/f3305228-2eea-4232-947d-6351a64bc6df" />
+<img width="1920" height="912" alt="image" src="https://github.com/user-attachments/assets/2b22346d-cba8-4e48-af84-5771e77c5bf5" />
+
