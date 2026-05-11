@@ -8,27 +8,6 @@ New-Item -ItemType Directory -Force -Path $iconDir | Out-Null
 $states = @{
   idle = @{
     Fill = "#2563EB"
-    Overlay = $null
-  }
-  matched = @{
-    Fill = "#2563EB"
-    Overlay = "check"
-  }
-  translating = @{
-    Fill = "#2563EB"
-    Overlay = "sync"
-  }
-  success = @{
-    Fill = "#2563EB"
-    Overlay = "check"
-  }
-  error = @{
-    Fill = "#2563EB"
-    Overlay = "error"
-  }
-  disabled = @{
-    Fill = "#9CA3AF"
-    Overlay = "pause"
   }
 }
 
@@ -96,59 +75,6 @@ foreach ($stateName in $states.Keys) {
     $paperBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(245, 255, 255, 255))
     $graphics.FillPath($paperBrush, $paperPath)
     Draw-CenteredText $graphics "A" $fontA $dark $paperRect
-
-    $overlay = $states[$stateName].Overlay
-    if ($overlay) {
-      $badgeSize = 36 * $scale
-      $badgeX = 88 * $scale
-      $badgeY = 84 * $scale
-      if ($overlay -eq "error") {
-        $badgeX = 82 * $scale
-        $badgeY = 82 * $scale
-      }
-      $badgeRect = [System.Drawing.RectangleF]::new([float]$badgeX, [float]$badgeY, [float]$badgeSize, [float]$badgeSize)
-
-      if ($overlay -eq "error") {
-        $triangle = New-Object System.Drawing.Drawing2D.GraphicsPath
-        $triangle.AddPolygon(@(
-          ([System.Drawing.PointF]::new([float]($badgeRect.X + $badgeRect.Width / 2), [float]$badgeRect.Y)),
-          ([System.Drawing.PointF]::new([float]$badgeRect.Right, [float]$badgeRect.Bottom)),
-          ([System.Drawing.PointF]::new([float]$badgeRect.X, [float]$badgeRect.Bottom))
-        ))
-        $graphics.FillPath((New-Object System.Drawing.SolidBrush (Convert-HexColor "#EF4444")), $triangle)
-        $errorFont = [System.Drawing.Font]::new($fontFamily, [float]([Math]::Max(6, 30 * $scale)), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-        Draw-CenteredText $graphics "!" $errorFont $white $badgeRect
-        $errorFont.Dispose()
-        $triangle.Dispose()
-      } else {
-        $overlayColor = switch ($overlay) {
-          "pause" { "#6B7280" }
-          default { "#22C55E" }
-        }
-        if ($overlay -eq "sync") {
-          $overlayColor = "#2563EB"
-        }
-        $badgeBrush = New-Object System.Drawing.SolidBrush (Convert-HexColor $overlayColor)
-        $graphics.FillEllipse($badgeBrush, $badgeRect)
-        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), ([Math]::Max(1.5, 5 * $scale))
-        if ($overlay -eq "pause") {
-          $graphics.DrawLine($pen, ($badgeRect.X + 12 * $scale), ($badgeRect.Y + 9 * $scale), ($badgeRect.X + 12 * $scale), ($badgeRect.Bottom - 9 * $scale))
-          $graphics.DrawLine($pen, ($badgeRect.X + 24 * $scale), ($badgeRect.Y + 9 * $scale), ($badgeRect.X + 24 * $scale), ($badgeRect.Bottom - 9 * $scale))
-        } elseif ($overlay -eq "sync") {
-          $syncFont = [System.Drawing.Font]::new($fontFamily, [float]([Math]::Max(5, 24 * $scale)), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-          Draw-CenteredText $graphics "..." $syncFont $white $badgeRect
-          $syncFont.Dispose()
-        } else {
-          $graphics.DrawLines($pen, @(
-            ([System.Drawing.PointF]::new([float]($badgeRect.X + 9 * $scale), [float]($badgeRect.Y + 19 * $scale))),
-            ([System.Drawing.PointF]::new([float]($badgeRect.X + 16 * $scale), [float]($badgeRect.Y + 26 * $scale))),
-            ([System.Drawing.PointF]::new([float]($badgeRect.X + 28 * $scale), [float]($badgeRect.Y + 11 * $scale)))
-          ))
-        }
-        $pen.Dispose()
-        $badgeBrush.Dispose()
-      }
-    }
 
     $file = Join-Path $iconDir "$stateName-$size.png"
     $bitmap.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)

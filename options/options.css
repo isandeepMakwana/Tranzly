@@ -2,11 +2,50 @@
   color-scheme: light;
   --bg: #f4f8ff;
   --panel: #ffffff;
+  --panel-muted: #f8fbff;
+  --field: #ffffff;
   --text: #0f172a;
   --muted: #5b667a;
   --border: #dce4ef;
+  --border-strong: #c9d5e6;
   --blue: #2473f6;
+  --blue-dark: #155bd4;
+  --blue-soft: #eaf3ff;
   --green: #0c8f37;
+  --red: #d71920;
+  --red-soft: #fff0f0;
+  --red-border: #fecaca;
+  --level-info: #2563eb;
+  --level-success: #16a34a;
+  --level-warning: #f97316;
+  --level-error: #ef4444;
+  --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  --tab-hover: #eef4fb;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #10131a;
+  --panel: #181d27;
+  --panel-muted: #121720;
+  --field: #111722;
+  --text: #eef4ff;
+  --muted: #a5b1c5;
+  --border: #2c3647;
+  --border-strong: #435169;
+  --blue: #60a5fa;
+  --blue-dark: #3b82f6;
+  --blue-soft: #172a44;
+  --green: #4ade80;
+  --red: #f87171;
+  --red-soft: #2b171c;
+  --red-border: #7f2b36;
+  --level-info: #60a5fa;
+  --level-success: #4ade80;
+  --level-warning: #fb923c;
+  --level-error: #f87171;
+  --shadow: 0 18px 38px rgba(0, 0, 0, 0.28);
+  --tab-hover: #212b3a;
 }
 
 * {
@@ -104,7 +143,42 @@ p {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow);
+}
+
+.settings-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.tab-button {
+  min-width: 92px;
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.tab-button:hover {
+  background: var(--tab-hover);
+  color: var(--text);
+}
+
+.tab-button.is-active {
+  background: var(--blue);
+  color: #ffffff;
+}
+
+.tab-panel[hidden] {
+  display: none;
 }
 
 .toggle-row {
@@ -131,7 +205,7 @@ p {
   inset: 0;
   border-radius: 999px;
   border: 1px solid #95a3b7;
-  background: #f1f5f9;
+  background: var(--panel-muted);
 }
 
 .switch span::after {
@@ -168,6 +242,8 @@ p {
   padding: 0 13px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  background: var(--field);
+  color: var(--text);
   outline: none;
 }
 
@@ -184,6 +260,10 @@ p {
   font-weight: 750;
 }
 
+.rule-form button:hover {
+  background: var(--blue-dark);
+}
+
 .rules-list {
   margin-top: 16px;
   border: 1px solid var(--border);
@@ -197,7 +277,7 @@ p {
   justify-content: space-between;
   min-height: 48px;
   padding: 0 14px;
-  background: #ffffff;
+  background: var(--field);
 }
 
 .rule-row + .rule-row {
@@ -211,8 +291,8 @@ p {
 .rule-row button {
   border: 0;
   border-radius: 6px;
-  background: #fff0f0;
-  color: #d71920;
+  background: var(--red-soft);
+  color: var(--red);
   font-weight: 750;
   padding: 7px 10px;
 }
@@ -220,7 +300,7 @@ p {
 .empty {
   padding: 18px;
   color: var(--muted);
-  background: #ffffff;
+  background: var(--field);
 }
 
 .logs-heading {
@@ -233,10 +313,10 @@ p {
 .logs-heading button {
   height: 34px;
   padding: 0 12px;
-  border: 1px solid #fecaca;
+  border: 1px solid var(--red-border);
   border-radius: 6px;
-  background: #fff7f7;
-  color: #d71920;
+  background: var(--red-soft);
+  color: var(--red);
   font-weight: 750;
 }
 
@@ -252,7 +332,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--field);
 }
 
 .log-card h3 {
@@ -305,22 +385,22 @@ p {
 
 .level-info code,
 .dot-info {
-  color: #2563eb;
+  color: var(--level-info);
 }
 
 .level-success code,
 .dot-success {
-  color: #16a34a;
+  color: var(--level-success);
 }
 
 .level-warning code,
 .dot-warning {
-  color: #f97316;
+  color: var(--level-warning);
 }
 
 .level-error code,
 .dot-error {
-  color: #ef4444;
+  color: var(--level-error);
 }
 
 @media (max-width: 720px) {

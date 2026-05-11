@@ -4,46 +4,8 @@ const MAX_LOGS = 250;
 const STORAGE_KEYS = {
   autoTranslate: "autoTranslate",
   logs: "logs",
-  rules: "rules"
-};
-
-const ICON_PATHS = {
-  idle: {
-    16: "icons/idle-16.png",
-    32: "icons/idle-32.png",
-    48: "icons/idle-48.png",
-    128: "icons/idle-128.png"
-  },
-  matched: {
-    16: "icons/matched-16.png",
-    32: "icons/matched-32.png",
-    48: "icons/matched-48.png",
-    128: "icons/matched-128.png"
-  },
-  translating: {
-    16: "icons/translating-16.png",
-    32: "icons/translating-32.png",
-    48: "icons/translating-48.png",
-    128: "icons/translating-128.png"
-  },
-  success: {
-    16: "icons/success-16.png",
-    32: "icons/success-32.png",
-    48: "icons/success-48.png",
-    128: "icons/success-128.png"
-  },
-  error: {
-    16: "icons/error-16.png",
-    32: "icons/error-32.png",
-    48: "icons/error-48.png",
-    128: "icons/error-128.png"
-  },
-  disabled: {
-    16: "icons/disabled-16.png",
-    32: "icons/disabled-32.png",
-    48: "icons/disabled-48.png",
-    128: "icons/disabled-128.png"
-  }
+  rules: "rules",
+  theme: "theme"
 };
 
 const BADGES = {
@@ -55,7 +17,7 @@ const BADGES = {
   disabled: { text: "OFF", color: "#6B7280" }
 };
 
-const tabIconStates = new Map();
+const tabActionStates = new Map();
 
 function normalizeRule(value) {
   return String(value || "")
@@ -91,7 +53,8 @@ async function ensureDefaults() {
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.autoTranslate,
     STORAGE_KEYS.logs,
-    STORAGE_KEYS.rules
+    STORAGE_KEYS.rules,
+    STORAGE_KEYS.theme
   ]);
   const updates = {};
 
@@ -105,6 +68,10 @@ async function ensureDefaults() {
 
   if (!Array.isArray(stored[STORAGE_KEYS.logs])) {
     updates[STORAGE_KEYS.logs] = [];
+  }
+
+  if (stored[STORAGE_KEYS.theme] !== "dark" && stored[STORAGE_KEYS.theme] !== "light") {
+    updates[STORAGE_KEYS.theme] = "light";
   }
 
   if (Object.keys(updates).length) {
@@ -132,7 +99,7 @@ async function addLog(entry) {
       [STORAGE_KEYS.logs]: [normalizedEntry, ...logs].slice(0, MAX_LOGS)
     });
   } catch {
-    // Logging should never block translation or icon updates.
+    // Logging should never block translation or badge updates.
   }
 }
 
@@ -154,8 +121,8 @@ async function createContextMenus() {
   });
 }
 
-async function setBadge(tabId, iconState) {
-  const badge = BADGES[iconState] || BADGES.idle;
+async function setBadge(tabId, actionState) {
+  const badge = BADGES[actionState] || BADGES.idle;
   await chrome.action.setBadgeText({ tabId, text: badge.text });
   await chrome.action.setBadgeBackgroundColor({ tabId, color: badge.color });
 
@@ -164,33 +131,32 @@ async function setBadge(tabId, iconState) {
   }
 }
 
-async function setTabIcon(tabId, iconState, reason = "state update") {
-  if (!tabId || !ICON_PATHS[iconState]) {
+async function setTabActionState(tabId, actionState, reason = "state update") {
+  if (!tabId) {
     return;
   }
 
-  const previousState = tabIconStates.get(tabId);
+  const previousState = tabActionStates.get(tabId);
 
   try {
-    await chrome.action.setIcon({ tabId, path: ICON_PATHS[iconState] });
-    await setBadge(tabId, iconState);
-    tabIconStates.set(tabId, iconState);
+    await setBadge(tabId, actionState);
+    tabActionStates.set(tabId, actionState);
 
-    if (previousState !== iconState) {
+    if (previousState !== actionState) {
       await addLog({
         category: "icon",
-        code: `ICON_${iconState.toUpperCase()}`,
-        level: iconState === "error" ? "error" : iconState === "success" ? "success" : "info",
-        message: `Icon state -> ${iconState.toUpperCase()}`,
+        code: `BADGE_${actionState.toUpperCase()}`,
+        level: actionState === "error" ? "error" : actionState === "success" ? "success" : "info",
+        message: `Badge state -> ${actionState.toUpperCase()}`,
         details: { tabId, reason }
       });
     }
   } catch {
-    // Action icons cannot be updated for every internal Chrome page.
+    // Action badges cannot be updated for every internal Chrome page.
   }
 }
 
-function iconStateFromStatus(status) {
+function actionStateFromStatus(status) {
   if (status?.autoTranslate === false) {
     return "disabled";
   }
@@ -214,7 +180,7 @@ function iconStateFromStatus(status) {
   return "idle";
 }
 
-async function iconStateFromUrl(url) {
+async function actionStateFromUrl(url) {
   const config = await getConfig();
 
   if (!config.autoTranslate) {
@@ -229,8 +195,8 @@ async function updateTabFromUrl(tabId, url, reason = "tab update") {
     return;
   }
 
-  const iconState = await iconStateFromUrl(url);
-  await setTabIcon(tabId, iconState, reason);
+  const actionState = await actionStateFromUrl(url);
+  await setTabActionState(tabId, actionState, reason);
 }
 
 async function updateAllTabs(reason = "settings update") {
@@ -318,9 +284,9 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (message?.type === "STATUS_UPDATE" && sender.tab?.id) {
-      await setTabIcon(
+      await setTabActionState(
         sender.tab.id,
-        iconStateFromStatus(message.status),
+        actionStateFromStatus(message.status),
         message.status?.state || "content status"
       );
       sendResponse({ ok: true });
@@ -428,5 +394,5 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  tabIconStates.delete(tabId);
+  tabActionStates.delete(tabId);
 });

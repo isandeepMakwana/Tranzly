@@ -1,6 +1,7 @@
 const STORAGE_KEYS = {
   autoTranslate: "autoTranslate",
-  rules: "rules"
+  rules: "rules",
+  theme: "theme"
 };
 
 const SELECTORS = {
@@ -29,6 +30,7 @@ const state = {
   tab: null,
   rules: [],
   autoTranslate: true,
+  theme: "light",
   contentStatus: null,
   pollTimer: null
 };
@@ -70,6 +72,15 @@ function normalizeRule(value) {
     .replace(/^https?:\/\//i, "")
     .replace(/\/+$/g, "")
     .toLowerCase();
+}
+
+function normalizeTheme(value) {
+  return value === "dark" ? "dark" : "light";
+}
+
+function applyTheme(nextTheme) {
+  state.theme = normalizeTheme(nextTheme);
+  document.documentElement.dataset.theme = state.theme;
 }
 
 function findMatchingRule(url, rules) {
@@ -188,6 +199,7 @@ async function loadStorage() {
     ? stored[STORAGE_KEYS.rules].map(normalizeRule).filter(Boolean)
     : [];
   state.autoTranslate = stored[STORAGE_KEYS.autoTranslate] !== false;
+  applyTheme(stored[STORAGE_KEYS.theme]);
 }
 
 async function saveRules(rules) {
@@ -375,6 +387,14 @@ function renderStatus() {
     return;
   }
 
+  if (status.state === "original") {
+    card.className = "notice notice-info";
+    card.querySelector(".notice-icon").innerHTML = icon("info");
+    title.textContent = "Original restored";
+    message.textContent = "Auto translation is paused for this page.";
+    return;
+  }
+
   card.className = "notice notice-success";
   card.querySelector(".notice-icon").innerHTML = icon("check");
   title.textContent = "Ready";
@@ -453,6 +473,14 @@ async function init() {
 
 window.addEventListener("unload", () => {
   clearInterval(state.pollTimer);
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes[STORAGE_KEYS.theme]) {
+    return;
+  }
+
+  applyTheme(changes[STORAGE_KEYS.theme].newValue);
 });
 
 init();

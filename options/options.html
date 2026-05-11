@@ -19,38 +19,60 @@
         </div>
       </header>
 
-      <section class="panel">
-        <div class="toggle-row">
-          <div>
-            <h2>Auto translate matching pages</h2>
-            <p>When enabled, pages whose URL contains one of your rules are translated automatically.</p>
-          </div>
-          <label class="switch" for="auto-toggle">
-            <input id="auto-toggle" type="checkbox">
-            <span></span>
-          </label>
-        </div>
-      </section>
+      <nav class="settings-tabs" role="tablist" aria-label="Settings sections">
+        <button id="tab-general" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="general-panel" data-tab="general">General</button>
+        <button id="tab-logs" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="logs-panel" data-tab="logs">Logs</button>
+      </nav>
 
-      <section class="panel">
-        <h2>URL contains rules</h2>
-        <form id="rule-form" class="rule-form">
-          <input id="rule-input" type="text" autocomplete="off" placeholder="cloud.oppoer.me">
-          <button type="submit">Add rule</button>
-        </form>
-        <div id="rules-list" class="rules-list"></div>
-      </section>
-
-      <section class="panel logs-panel">
-        <div class="logs-heading">
-          <div>
-            <h2>Logs overview</h2>
-            <p>Recent rule, translation, page, icon, lifecycle, and user-action events.</p>
+      <div id="general-panel" class="tab-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+        <section class="panel">
+          <div class="toggle-row">
+            <div>
+              <h2>Dark mode</h2>
+              <p>Use the darker interface across the popup and settings page.</p>
+            </div>
+            <label class="switch" for="theme-toggle">
+              <input id="theme-toggle" type="checkbox">
+              <span></span>
+            </label>
           </div>
-          <button id="clear-logs" type="button">Clear logs</button>
-        </div>
-        <div id="logs-grid" class="logs-grid"></div>
-      </section>
+        </section>
+
+        <section class="panel">
+          <div class="toggle-row">
+            <div>
+              <h2>Auto translate matching pages</h2>
+              <p>When enabled, pages whose URL contains one of your rules are translated automatically.</p>
+            </div>
+            <label class="switch" for="auto-toggle">
+              <input id="auto-toggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>URL contains rules</h2>
+          <form id="rule-form" class="rule-form">
+            <input id="rule-input" type="text" autocomplete="off" placeholder="cloud.oppoer.me">
+            <button type="submit">Add rule</button>
+          </form>
+          <div id="rules-list" class="rules-list"></div>
+        </section>
+      </div>
+
+      <div id="logs-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-logs" hidden>
+        <section class="panel logs-panel">
+          <div class="logs-heading">
+            <div>
+              <h2>Logs overview</h2>
+              <p>Recent rule, translation, page, badge, lifecycle, and user-action events.</p>
+            </div>
+            <button id="clear-logs" type="button">Clear logs</button>
+          </div>
+          <div id="logs-grid" class="logs-grid"></div>
+        </section>
+      </div>
     </main>
 
     <script src="options.js"></script>

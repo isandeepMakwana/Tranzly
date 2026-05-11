@@ -1,7 +1,8 @@
 const STORAGE_KEYS = {
   autoTranslate: "autoTranslate",
   logs: "logs",
-  rules: "rules"
+  rules: "rules",
+  theme: "theme"
 };
 
 const autoToggle = document.querySelector("#auto-toggle");
@@ -10,12 +11,15 @@ const logsGrid = document.querySelector("#logs-grid");
 const ruleForm = document.querySelector("#rule-form");
 const ruleInput = document.querySelector("#rule-input");
 const rulesList = document.querySelector("#rules-list");
+const themeToggle = document.querySelector("#theme-toggle");
+const tabButtons = document.querySelectorAll(".tab-button");
+const tabPanels = document.querySelectorAll(".tab-panel");
 
 const LOG_GROUPS = [
   { category: "rule", title: "Rule engine logs", color: "#7C3AED" },
   { category: "translation", title: "Translation engine logs", color: "#2563EB" },
   { category: "error", title: "Error logs", color: "#EF4444" },
-  { category: "icon", title: "Icon state logs", color: "#16A34A" },
+  { category: "icon", title: "Badge state logs", color: "#16A34A" },
   { category: "lifecycle", title: "Extension lifecycle logs", color: "#F97316" },
   { category: "page", title: "Page & tab logs", color: "#0D9488" },
   { category: "user", title: "User action logs", color: "#2563EB" }
@@ -23,6 +27,7 @@ const LOG_GROUPS = [
 
 let logs = [];
 let rules = [];
+let theme = "light";
 
 function escapeHtml(value) {
   return String(value || "").replace(/[&<>"']/g, (character) => ({
@@ -40,6 +45,32 @@ function normalizeRule(value) {
     .replace(/^https?:\/\//i, "")
     .replace(/\/+$/g, "")
     .toLowerCase();
+}
+
+function normalizeTheme(value) {
+  return value === "dark" ? "dark" : "light";
+}
+
+function applyTheme(nextTheme) {
+  theme = normalizeTheme(nextTheme);
+  document.documentElement.dataset.theme = theme;
+  themeToggle.checked = theme === "dark";
+}
+
+function setActiveTab(tabName) {
+  const normalizedTab = tabName === "logs" ? "logs" : "general";
+
+  tabButtons.forEach((button) => {
+    const isActive = button.dataset.tab === normalizedTab;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+
+  tabPanels.forEach((panel) => {
+    const isActive = panel.id === `${normalizedTab}-panel`;
+    panel.classList.toggle("is-active", isActive);
+    panel.hidden = !isActive;
+  });
 }
 
 function sendLog(category, code, message, level = "info", details = {}) {
@@ -129,14 +160,28 @@ async function loadState() {
     : [];
   logs = Array.isArray(stored[STORAGE_KEYS.logs]) ? stored[STORAGE_KEYS.logs] : [];
   autoToggle.checked = stored[STORAGE_KEYS.autoTranslate] !== false;
+  applyTheme(stored[STORAGE_KEYS.theme]);
 
   renderRules();
   renderLogs();
 }
 
+tabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setActiveTab(button.dataset.tab);
+  });
+});
+
 autoToggle.addEventListener("change", async () => {
   await chrome.storage.local.set({ [STORAGE_KEYS.autoTranslate]: autoToggle.checked });
   sendLog("user", "USER_TOGGLE_AUTO", `Auto translate toggled: ${autoToggle.checked ? "ON" : "OFF"}`, "info");
+});
+
+themeToggle.addEventListener("change", async () => {
+  const nextTheme = themeToggle.checked ? "dark" : "light";
+  applyTheme(nextTheme);
+  await chrome.storage.local.set({ [STORAGE_KEYS.theme]: nextTheme });
+  sendLog("user", "USER_TOGGLE_THEME", `Theme changed to ${nextTheme}`, "info");
 });
 
 ruleForm.addEventListener("submit", async (event) => {
@@ -182,6 +227,11 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (changes[STORAGE_KEYS.autoTranslate]) {
     autoToggle.checked = changes[STORAGE_KEYS.autoTranslate].newValue !== false;
   }
+
+  if (changes[STORAGE_KEYS.theme]) {
+    applyTheme(changes[STORAGE_KEYS.theme].newValue);
+  }
 });
 
+setActiveTab(location.hash === "#logs" ? "logs" : "general");
 loadState();
