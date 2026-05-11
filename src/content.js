@@ -26,11 +26,19 @@
   const TRANSLATABLE_ATTRIBUTES = ["title", "aria-label", "placeholder", "alt"];
   const CHINESE_TEXT = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
   const MAX_TEXT_LENGTH = 1200;
+  const BATCH_MAX_CHARS = 3500;
+  const BATCH_MAX_ITEMS = 40;
+  const FIRST_PAINT_BATCH_ITEMS = 12;
+  const BATCH_MARKER_PREFIX = "__APT_";
+  const BATCH_MARKER_SUFFIX = "__";
+  const PROGRESS_UPDATE_INTERVAL_MS = 180;
+  const TRANSLATION_CONCURRENCY = 6;
 
   const translatedTextNodes = new Map();
   const translatedAttributes = new Map();
   const translationCache = new Map();
 
+  let translatorCreationPromise = null;
   let translatorInstance = null;
   let isTranslating = false;
   let observer = null;
@@ -293,36 +301,82 @@
     ];
   }
 
+  function getTargetElement(target) {
+    if (target.type === "text") {
+      return target.node?.parentElement || null;
+    }
+
+    return target.element || null;
+  }
+
+  function getTargetPriority(target) {
+    const element = getTargetElement(target);
+    if (!element || typeof element.getBoundingClientRect !== "function") {
+      return Number.MAX_SAFE_INTEGER;
+    }
+
+    const rect = element.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+    const isVisible = rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.top <= viewportHeight;
+
+    if (isVisible) {
+      return Math.max(0, rect.top);
+    }
+
+    const distanceFromViewport = rect.top < 0
+      ? Math.abs(rect.bottom)
+      : Math.abs(rect.top - viewportHeight);
+
+    return 100000 + distanceFromViewport;
+  }
+
+  function prioritizeTargets(targets) {
+    return [...targets].sort((left, right) => getTargetPriority(left) - getTargetPriority(right));
+  }
+
   async function getTranslator() {
     if (translatorInstance) {
       return translatorInstance;
     }
 
-    if (!globalThis.Translator || typeof globalThis.Translator.create !== "function") {
-      throw new Error("Translator is not available in this Chrome version.");
+    if (translatorCreationPromise) {
+      return translatorCreationPromise;
     }
 
-    const availability = typeof globalThis.Translator.availability === "function"
-      ? await globalThis.Translator.availability({
+    translatorCreationPromise = (async () => {
+      if (!globalThis.Translator || typeof globalThis.Translator.create !== "function") {
+        throw new Error("Translator is not available in this Chrome version.");
+      }
+
+      const availability = typeof globalThis.Translator.availability === "function"
+        ? await globalThis.Translator.availability({
+          sourceLanguage: "zh",
+          targetLanguage: "en"
+        })
+        : "available";
+
+      if (availability === "unavailable") {
+        throw new Error("Chinese to English translation is unavailable in this Chrome version.");
+      }
+
+      translatorInstance = await globalThis.Translator.create({
         sourceLanguage: "zh",
         targetLanguage: "en"
-      })
-      : "available";
+      });
 
-    if (availability === "unavailable") {
-      throw new Error("Chinese to English translation is unavailable in this Chrome version.");
+      if (translatorInstance.ready) {
+        await translatorInstance.ready;
+      }
+
+      return translatorInstance;
+    })();
+
+    try {
+      return await translatorCreationPromise;
+    } catch (error) {
+      translatorCreationPromise = null;
+      throw error;
     }
-
-    translatorInstance = await globalThis.Translator.create({
-      sourceLanguage: "zh",
-      targetLanguage: "en"
-    });
-
-    if (translatorInstance.ready) {
-      await translatorInstance.ready;
-    }
-
-    return translatorInstance;
   }
 
   async function translateText(value) {
@@ -337,6 +391,202 @@
     const result = translated || trimmed;
     translationCache.set(trimmed, result);
     return result;
+  }
+
+  function createBatchMarker(index) {
+    return `${BATCH_MARKER_PREFIX}${index}${BATCH_MARKER_SUFFIX}`;
+  }
+
+  function createTranslationChunks(texts) {
+    const chunks = [];
+    let currentChunk = [];
+    let currentLength = 0;
+
+    texts.forEach((text) => {
+      const markerLength = createBatchMarker(currentChunk.length).length + 2;
+      const nextLength = currentLength + markerLength + text.length + 1;
+      const shouldStartNewChunk = currentChunk.length > 0
+        && (currentChunk.length >= BATCH_MAX_ITEMS || nextLength > BATCH_MAX_CHARS);
+
+      if (shouldStartNewChunk) {
+        chunks.push(currentChunk);
+        currentChunk = [];
+        currentLength = 0;
+      }
+
+      currentChunk.push(text);
+      currentLength += markerLength + text.length + 1;
+    });
+
+    if (currentChunk.length) {
+      chunks.push(currentChunk);
+    }
+
+    return chunks;
+  }
+
+  function buildBatchPayload(texts) {
+    return texts
+      .map((text, index) => `${createBatchMarker(index)}\n${text}`)
+      .join("\n");
+  }
+
+  function parseBatchTranslation(rawTranslation, sourceTexts) {
+    const output = String(rawTranslation || "");
+    const markerPattern = /__APT_(\d+)__/g;
+    const markers = [];
+    let match = markerPattern.exec(output);
+
+    while (match) {
+      markers.push({
+        index: Number(match[1]),
+        start: match.index,
+        end: markerPattern.lastIndex
+      });
+      match = markerPattern.exec(output);
+    }
+
+    if (markers.length !== sourceTexts.length) {
+      return null;
+    }
+
+    const parsed = new Map();
+    for (let index = 0; index < markers.length; index += 1) {
+      const marker = markers[index];
+      const nextMarker = markers[index + 1];
+      const sourceText = sourceTexts[marker.index];
+      const translated = compactWhitespace(output.slice(marker.end, nextMarker ? nextMarker.start : output.length));
+
+      if (!sourceText || !translated) {
+        return null;
+      }
+
+      parsed.set(sourceText, translated);
+    }
+
+    return parsed.size === sourceTexts.length ? parsed : null;
+  }
+
+  async function translateBatch(texts) {
+    if (texts.length === 1) {
+      return new Map([[texts[0], await translateText(texts[0])]]);
+    }
+
+    const translator = await getTranslator();
+    const rawTranslation = await translator.translate(buildBatchPayload(texts));
+    const parsed = parseBatchTranslation(rawTranslation, texts);
+
+    if (!parsed) {
+      logEvent("translation", "TRANSLATE_BATCH_FALLBACK", "Batch translation fallback used", "warning", {
+        count: texts.length
+      });
+      const fallbackEntries = await Promise.all(texts.map(async (text) => [text, await translateText(text)]));
+      return new Map(fallbackEntries);
+    }
+
+    parsed.forEach((translated, sourceText) => {
+      translationCache.set(sourceText, translated);
+    });
+
+    return parsed;
+  }
+
+  function getTranslationKey(value) {
+    return compactWhitespace(value);
+  }
+
+  function yieldToBrowser() {
+    return new Promise((resolve) => {
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => {
+          setTimeout(resolve, 0);
+        });
+        return;
+      }
+
+      setTimeout(resolve, 0);
+    });
+  }
+
+  async function translateUniqueTexts(targets, onProgress, onChunkTranslated) {
+    const uniqueTexts = [...new Set(targets.map((target) => getTranslationKey(target.original)))];
+    const translatedByText = new Map();
+    const cachedTexts = new Map();
+    const pendingTexts = [];
+
+    uniqueTexts.forEach((text) => {
+      if (translationCache.has(text)) {
+        const cachedTranslation = translationCache.get(text);
+        translatedByText.set(text, cachedTranslation);
+        cachedTexts.set(text, cachedTranslation);
+        return;
+      }
+
+      pendingTexts.push(text);
+    });
+
+    if (cachedTexts.size) {
+      onChunkTranslated(cachedTexts);
+    }
+
+    if (!pendingTexts.length) {
+      onProgress(uniqueTexts.length, uniqueTexts.length);
+      return translatedByText;
+    }
+
+    const firstPaintChunk = pendingTexts.slice(0, FIRST_PAINT_BATCH_ITEMS);
+    const remainingTexts = pendingTexts.slice(FIRST_PAINT_BATCH_ITEMS);
+    const chunks = createTranslationChunks(remainingTexts);
+    let completed = uniqueTexts.length - pendingTexts.length;
+    let nextIndex = 0;
+
+    async function translateAndPublishChunk(chunk) {
+      if (!chunk.length) {
+        return;
+      }
+
+      const translatedChunk = await translateBatch(chunk);
+      translatedChunk.forEach((translated, sourceText) => {
+        translatedByText.set(sourceText, translated);
+      });
+      completed += chunk.length;
+      onChunkTranslated(translatedChunk);
+      onProgress(completed, uniqueTexts.length);
+      await yieldToBrowser();
+    }
+
+    await translateAndPublishChunk(firstPaintChunk);
+
+    async function worker() {
+      while (nextIndex < chunks.length) {
+        const chunk = chunks[nextIndex];
+        nextIndex += 1;
+        await translateAndPublishChunk(chunk);
+      }
+    }
+
+    onProgress(completed, uniqueTexts.length);
+
+    const workerCount = Math.min(TRANSLATION_CONCURRENCY, chunks.length);
+    await Promise.all(Array.from({ length: workerCount }, worker));
+    return translatedByText;
+  }
+
+  function createProgressReporter(totalCount) {
+    let lastUpdate = 0;
+
+    return (completedCount, translatedCount = status.translatedCount || 0, force = false) => {
+      const now = Date.now();
+      if (!force && now - lastUpdate < PROGRESS_UPDATE_INTERVAL_MS && completedCount < totalCount) {
+        return;
+      }
+
+      lastUpdate = now;
+      setStatus({
+        progress: totalCount ? Math.round((completedCount / totalCount) * 100) : 100,
+        translatedCount
+      });
+    };
   }
 
   function rememberAttributeOriginal(element, attribute, original) {
@@ -403,7 +653,7 @@
       restoreOriginal({ silent: true });
     }
 
-    const targets = collectTargets();
+    const targets = prioritizeTargets(collectTargets());
     logEvent("translation", "TRANSLATE_FOUND", `Found ${targets.length} translatable elements`, "info", {
       count: targets.length
     });
@@ -436,19 +686,57 @@
     });
 
     try {
-      for (let index = 0; index < targets.length; index += 1) {
-        const target = targets[index];
-        const translated = await translateText(target.original);
+      const reportTranslationProgress = createProgressReporter(targets.length);
+      const targetsByText = new Map();
+      const appliedTargets = new Set();
 
-        if (applyTranslation(target, translated)) {
+      targets.forEach((target) => {
+        const key = getTranslationKey(target.original);
+        const groupedTargets = targetsByText.get(key) || [];
+        groupedTargets.push(target);
+        targetsByText.set(key, groupedTargets);
+      });
+
+      function applyTranslatedChunk(translatedChunk) {
+        translatedChunk.forEach((translated, sourceText) => {
+          const groupedTargets = targetsByText.get(sourceText) || [];
+
+          groupedTargets.forEach((target) => {
+            if (appliedTargets.has(target)) {
+              return;
+            }
+
+            appliedTargets.add(target);
+            if (translated && applyTranslation(target, translated)) {
+              appliedCount += 1;
+            }
+          });
+        });
+
+        reportTranslationProgress(appliedTargets.size, appliedCount, true);
+      }
+
+      const translatedByText = await translateUniqueTexts(targets, (completed, total) => {
+        const estimatedCompletedTargets = Math.round((completed / total) * targets.length);
+        reportTranslationProgress(Math.max(appliedTargets.size, estimatedCompletedTargets), appliedCount);
+      }, applyTranslatedChunk);
+
+      targets.forEach((target, index) => {
+        if (appliedTargets.has(target)) {
+          return;
+        }
+
+        const translated = translatedByText.get(getTranslationKey(target.original));
+
+        if (translated && applyTranslation(target, translated)) {
           appliedCount += 1;
         }
 
-        setStatus({
-          progress: Math.round(((index + 1) / targets.length) * 100),
-          translatedCount: appliedCount
-        });
-      }
+        appliedTargets.add(target);
+        reportTranslationProgress(index + 1, appliedCount);
+      });
+
+      reportTranslationProgress(targets.length, appliedCount, true);
 
       setStatus({
         state: "translated",
@@ -568,13 +856,51 @@
     }, delay);
   }
 
+  function nodeMayContainChinese(node) {
+    if (!node) {
+      return false;
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      return CHINESE_TEXT.test(node.nodeValue || "");
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return false;
+    }
+
+    const element = node;
+    if (isElementSkipped(element)) {
+      return false;
+    }
+
+    if (CHINESE_TEXT.test(element.textContent || "")) {
+      return true;
+    }
+
+    return TRANSLATABLE_ATTRIBUTES.some((attribute) => {
+      const value = element.getAttribute(attribute);
+      return value && CHINESE_TEXT.test(value);
+    });
+  }
+
+  function mutationsMayContainChinese(mutations) {
+    return mutations.some((mutation) => {
+      if (mutation.type === "characterData") {
+        return nodeMayContainChinese(mutation.target);
+      }
+
+      return Array.from(mutation.addedNodes || []).some(nodeMayContainChinese);
+    });
+  }
+
   function startObserver() {
     if (observer || !document.documentElement) {
       return;
     }
 
-    observer = new MutationObserver(() => {
-      if (!isTranslating) {
+    observer = new MutationObserver((mutations) => {
+      if (!isTranslating && mutationsMayContainChinese(mutations)) {
         scheduleAutoTranslate(650);
       }
     });
